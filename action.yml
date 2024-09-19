@@ -1,0 +1,36 @@
+name: load-1password-secrets
+description: Loads secrets from 1password into the environment
+
+inputs:
+  service-account-token:
+    description: 1Password service account token
+    required: true
+  path:
+    description: Path to the file to load environment variable entries from
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Install 1password CLI
+        OP_INSTALL_DIR="$(mktemp -d)"
+        curl --fail https://cache.agilebits.com/dist/1P/op2/pkg/v2.29.0/op_linux_amd64_v2.29.0.zip -o $OP_INSTALL_DIR/op.zip
+        unzip -o $OP_INSTALL_DIR/op.zip -d $OP_INSTALL_DIR
+
+        # `op inject` will resolve envsubst variables in the input file.
+        # Then it'll resolve `op://` URLs.
+        # The result is a dotenv-like file, which we append to `$GITHUB_ENV` to export as envvars.
+        # Lastly we output mask commands so that GitHub Actions will mask these secrets with *** in the logs.
+        $OP_INSTALL_DIR/op inject --in-file <(
+            # Filter out already set environment variables from 1password file.
+            grep --invert-match --fixed-string --file <(
+                # Output all currently set environment variables without their values. (`X=` lines)
+                env | grep --extended-regexp --only-matching '^\w+='
+            ) "${{ inputs.path }}"
+        ) \
+          | tee --append $GITHUB_ENV \
+          | sed 's/^[^=]\+=/::add-mask::/'
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.service-account-token }}
